@@ -82,7 +82,6 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private float targetLockRange = 35f;
     [SerializeField] private float targetLockScreenRadius = 0.35f;
     [SerializeField] private Text targetLockText;
-    [SerializeField] private string targetLockHudText = "Mira: Ghost";
 
     private readonly HashSet<int> boolParameters = new HashSet<int>();
     private readonly HashSet<int> triggerParameters = new HashSet<int>();
@@ -102,6 +101,7 @@ public class PlayerController : MonoBehaviour
     private bool isDead;
     private bool warnedMissingProjectile;
     private GhostEnemy lockedTarget;
+    private GhostTargetAura lockedTargetAura;
     private AimTarget aimTargetController;
 
     public event Action<int, string, Sprite> MagicChanged;
@@ -337,6 +337,7 @@ public class PlayerController : MonoBehaviour
         }
 
         lockedTarget = bestTarget;
+        SetLockedTargetAura(true);
         if (aimTargetController != null)
         {
             aimTargetController.SetLockTarget(lockedTarget.AimPoint);
@@ -347,7 +348,9 @@ public class PlayerController : MonoBehaviour
 
     private void ClearTargetLock()
     {
+        SetLockedTargetAura(false);
         lockedTarget = null;
+        lockedTargetAura = null;
         if (aimTargetController != null)
         {
             aimTargetController.ClearLockTarget();
@@ -681,9 +684,28 @@ public class PlayerController : MonoBehaviour
             return;
         }
 
-        bool hasLockedTarget = lockedTarget != null && lockedTarget.IsAlive;
-        targetLockText.gameObject.SetActive(hasLockedTarget);
-        targetLockText.text = hasLockedTarget ? targetLockHudText : string.Empty;
+        targetLockText.gameObject.SetActive(false);
+        targetLockText.text = string.Empty;
+    }
+
+    private void SetLockedTargetAura(bool visible)
+    {
+        if (lockedTarget == null)
+        {
+            return;
+        }
+
+        if (lockedTargetAura == null)
+        {
+            lockedTargetAura = lockedTarget.GetComponent<GhostTargetAura>();
+        }
+
+        if (lockedTargetAura != null)
+        {
+            lockedTargetAura.SetVisible(visible);
+        }
+
+        lockedTarget.SetHealthBarVisible(visible);
     }
 
     private void UpdateAttackTimeout()

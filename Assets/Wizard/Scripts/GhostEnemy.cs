@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 
 [DisallowMultipleComponent]
 public class GhostEnemy : MonoBehaviour, IDamageable
@@ -26,8 +27,9 @@ public class GhostEnemy : MonoBehaviour, IDamageable
     [SerializeField] private float attackRange = 2.05f;
     [SerializeField] private float attackCooldown = 1.35f;
     [SerializeField] private float attackHitDelay = 0.45f;
+    [SerializeField, Min(0f)] private float attackAnimationLock = 0.85f;
     [SerializeField] private float attackContactPadding = 0.45f;
-    [SerializeField] private float damageAnimationLock = 0.35f;
+    [SerializeField] private float damageAnimationLock = 0.55f;
     [SerializeField] private float deathDestroyDelay = 4f;
 
     [Header("Audio")]
@@ -47,15 +49,31 @@ public class GhostEnemy : MonoBehaviour, IDamageable
     [SerializeField] private float moveBlendTime = 0.12f;
     [SerializeField] private float actionBlendTime = 0.08f;
 
+    [Header("Health Bar")]
+    [SerializeField] private Canvas healthBarCanvas;
+    [SerializeField] private Image healthBarFillImage;
+    [SerializeField] private Image healthBarDelayImage;
+    [SerializeField] private Color highHealthColor = new Color(0.35f, 1f, 0.65f, 1f);
+    [SerializeField] private Color midHealthColor = new Color(1f, 0.78f, 0.24f, 1f);
+    [SerializeField] private Color lowHealthColor = new Color(1f, 0.2f, 0.18f, 1f);
+    [SerializeField, Min(0f)] private float healthDelaySpeed = 0.65f;
+    [SerializeField] private bool faceHealthBarToCamera = true;
+
     private Animator animator;
     private Collider hitCollider;
     private Collider playerHitCollider;
     private CharacterController playerCharacterController;
+    private Camera healthBarCamera;
+    private RectTransform healthBarFillRect;
+    private RectTransform healthBarDelayRect;
     private float currentHealth;
+    private float healthPercent = 1f;
+    private float healthDelayPercent = 1f;
     private float attackCooldownTimer;
     private float attackHitTimer;
     private float actionLockTimer;
     private bool attackDamageQueued;
+    private bool healthBarVisible;
     private bool isDead;
     private int currentStateHash;
     private Vector3 desiredVelocity;
@@ -81,6 +99,9 @@ public class GhostEnemy : MonoBehaviour, IDamageable
         ConfigureRigidbody();
         ConfigureAudioSource();
         currentHealth = maxHealth;
+        ResolveHealthBarReferences();
+        UpdateHealthBar();
+        SetHealthBarVisible(false);
         desiredRotation = transform.rotation;
     }
 
@@ -88,6 +109,7 @@ public class GhostEnemy : MonoBehaviour, IDamageable
     {
         ResolvePlayerReferences();
         PlayGhostLoop();
+        CrossFadeState(idleState, 0f, true);
     }
 
     private void Update()
@@ -154,6 +176,12 @@ public class GhostEnemy : MonoBehaviour, IDamageable
         }
     }
 
+    private void LateUpdate()
+    {
+        UpdateHealthBarDelay();
+        FaceHealthBarToCamera();
+    }
+
     public void TakeDamage(float damage, GameObject source)
     {
         if (isDead || damage <= 0f)
@@ -162,6 +190,7 @@ public class GhostEnemy : MonoBehaviour, IDamageable
         }
 
         currentHealth = Mathf.Max(0f, currentHealth - damage);
+        UpdateHealthBar();
         if (currentHealth <= 0f)
         {
             Die();
@@ -170,6 +199,17 @@ public class GhostEnemy : MonoBehaviour, IDamageable
 
         actionLockTimer = damageAnimationLock;
         CrossFadeState(damageState, actionBlendTime, true);
+    }
+
+    public void SetHealthBarVisible(bool visible)
+    {
+        healthBarVisible = visible && !isDead;
+        ResolveHealthBarReferences();
+
+        if (healthBarCanvas != null)
+        {
+            healthBarCanvas.gameObject.SetActive(healthBarVisible);
+        }
     }
 
     private void ResolvePlayerReferences()
@@ -306,7 +346,7 @@ public class GhostEnemy : MonoBehaviour, IDamageable
         attackCooldownTimer = attackCooldown;
         attackHitTimer = attackHitDelay;
         attackDamageQueued = true;
-        actionLockTimer = attackHitDelay;
+        actionLockTimer = Mathf.Max(attackHitDelay, attackAnimationLock);
         PlayAttackSound();
         CrossFadeState(attackState, actionBlendTime, true);
     }
@@ -399,11 +439,153 @@ public class GhostEnemy : MonoBehaviour, IDamageable
         return player != null ? player.position : point;
     }
 
+    private void ResolveHealthBarReferences()
+    {
+        if (healthBarCanvas == null)
+        {
+            healthBarCanvas = GetComponentInChildren<Canvas>(true);
+        }
+
+        if (healthBarFillImage == null)
+        {
+            Transform fillTransform = transform.Find("HealthBar/Background/Fill");
+            if (fillTransform != null)
+            {
+                healthBarFillImage = fillTransform.GetComponent<Image>();
+            }
+        }
+
+        if (healthBarDelayImage == null)
+        {
+            Transform delayTransform = transform.Find("HealthBar/Background/Delay");
+            if (delayTransform != null)
+            {
+                healthBarDelayImage = delayTransform.GetComponent<Image>();
+            }
+        }
+
+        if (healthBarFillImage != null)
+        {
+            healthBarFillImage.type = Image.Type.Simple;
+            healthBarFillImage.raycastTarget = false;
+            healthBarFillRect = healthBarFillImage.rectTransform;
+            ConfigureHealthBarRect(healthBarFillRect);
+        }
+
+        if (healthBarDelayImage != null)
+        {
+            healthBarDelayImage.type = Image.Type.Simple;
+            healthBarDelayImage.raycastTarget = false;
+            healthBarDelayRect = healthBarDelayImage.rectTransform;
+            ConfigureHealthBarRect(healthBarDelayRect);
+        }
+    }
+
+    private void UpdateHealthBar()
+    {
+        ResolveHealthBarReferences();
+
+        if (healthBarFillImage == null)
+        {
+            return;
+        }
+
+        healthPercent = maxHealth > 0f ? Mathf.Clamp01(currentHealth / maxHealth) : 0f;
+        healthBarFillImage.color = GetHealthBarColor(healthPercent);
+        ApplyHealthBarPercent(healthBarFillRect, healthPercent);
+
+        if (healthDelayPercent < healthPercent)
+        {
+            healthDelayPercent = healthPercent;
+            ApplyHealthBarPercent(healthBarDelayRect, healthDelayPercent);
+        }
+    }
+
+    private void UpdateHealthBarDelay()
+    {
+        if (healthBarDelayRect == null)
+        {
+            return;
+        }
+
+        healthDelayPercent = Mathf.MoveTowards(
+            healthDelayPercent,
+            healthPercent,
+            Time.deltaTime * healthDelaySpeed);
+        ApplyHealthBarPercent(healthBarDelayRect, healthDelayPercent);
+    }
+
+    private void ConfigureHealthBarRect(RectTransform rectTransform)
+    {
+        if (rectTransform == null)
+        {
+            return;
+        }
+
+        rectTransform.anchorMin = Vector2.zero;
+        rectTransform.anchorMax = Vector2.one;
+        rectTransform.pivot = new Vector2(0f, 0.5f);
+        rectTransform.offsetMin = new Vector2(3f, 3f);
+        rectTransform.offsetMax = new Vector2(-3f, -3f);
+    }
+
+    private void ApplyHealthBarPercent(RectTransform rectTransform, float percent)
+    {
+        if (rectTransform == null)
+        {
+            return;
+        }
+
+        Vector3 scale = rectTransform.localScale;
+        scale.x = Mathf.Clamp01(percent);
+        scale.y = 1f;
+        scale.z = 1f;
+        rectTransform.localScale = scale;
+    }
+
+    private Color GetHealthBarColor(float healthPercent)
+    {
+        if (healthPercent > 0.55f)
+        {
+            return Color.Lerp(midHealthColor, highHealthColor, Mathf.InverseLerp(0.55f, 1f, healthPercent));
+        }
+
+        return Color.Lerp(lowHealthColor, midHealthColor, Mathf.InverseLerp(0.2f, 0.55f, healthPercent));
+    }
+
+    private void FaceHealthBarToCamera()
+    {
+        if (!faceHealthBarToCamera || healthBarCanvas == null || !healthBarCanvas.gameObject.activeInHierarchy)
+        {
+            return;
+        }
+
+        if (healthBarCamera == null || !healthBarCamera.isActiveAndEnabled)
+        {
+            healthBarCamera = Camera.main;
+        }
+
+        if (healthBarCamera == null)
+        {
+            return;
+        }
+
+        Transform barTransform = healthBarCanvas.transform;
+        Vector3 directionToCamera = barTransform.position - healthBarCamera.transform.position;
+        if (directionToCamera.sqrMagnitude <= Mathf.Epsilon)
+        {
+            return;
+        }
+
+        barTransform.rotation = Quaternion.LookRotation(directionToCamera.normalized, healthBarCamera.transform.up);
+    }
+
     private void Die()
     {
         isDead = true;
         attackDamageQueued = false;
         actionLockTimer = 0f;
+        SetHealthBarVisible(false);
 
         if (hitCollider != null)
         {
