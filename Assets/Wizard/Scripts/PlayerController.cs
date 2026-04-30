@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
@@ -13,6 +14,9 @@ public class PlayerController : MonoBehaviour
         [SerializeField] private float projectileSpeed = 25f;
         [SerializeField] private float projectileLifeTime = 3f;
         [SerializeField] private float damage = 1f;
+        [SerializeField] private Sprite icon;
+
+        [Header("Editable Sound")]
         [SerializeField] private AudioClip castSound;
         [SerializeField, Range(0f, 1f)] private float castVolume = 1f;
 
@@ -21,6 +25,7 @@ public class PlayerController : MonoBehaviour
         public float ProjectileSpeed => projectileSpeed;
         public float ProjectileLifeTime => projectileLifeTime;
         public float Damage => damage;
+        public Sprite Icon => icon;
         public AudioClip CastSound => castSound;
         public float CastVolume => castVolume;
     }
@@ -52,6 +57,7 @@ public class PlayerController : MonoBehaviour
     [SerializeField] private string runForwardState = "BattleRunForward";
     [SerializeField] private string attackState = "Attack04";
     [SerializeField] private string hitState = "GetHit";
+    [SerializeField] private string deathState = "Die";
     [SerializeField] private float locomotionBlendTime = 0.12f;
     [SerializeField] private float actionBlendTime = 0.08f;
     [SerializeField] private float attackResetTimeout = 1.2f;
@@ -93,9 +99,34 @@ public class PlayerController : MonoBehaviour
     private bool attackCastFinished;
     private bool isAttacking;
     private bool isGrounded;
+    private bool isDead;
     private bool warnedMissingProjectile;
     private GhostEnemy lockedTarget;
     private AimTarget aimTargetController;
+
+    public event Action<int, string, Sprite> MagicChanged;
+
+    public bool IsDead => isDead;
+    public int CurrentMagicIndex => currentMagicIndex;
+    public string CurrentMagicName
+    {
+        get
+        {
+            MagicSpell spell = GetCurrentMagicSpell();
+            return spell != null && !string.IsNullOrWhiteSpace(spell.DisplayName)
+                ? spell.DisplayName
+                : "Nenhuma";
+        }
+    }
+
+    public Sprite CurrentMagicIcon
+    {
+        get
+        {
+            MagicSpell spell = GetCurrentMagicSpell();
+            return spell != null ? spell.Icon : null;
+        }
+    }
 
     private void Start()
     {
@@ -132,6 +163,11 @@ public class PlayerController : MonoBehaviour
     private void Update()
     {
         if (controller == null)
+        {
+            return;
+        }
+
+        if (isDead)
         {
             return;
         }
@@ -357,9 +393,29 @@ public class PlayerController : MonoBehaviour
 
     public void PlayHitReaction()
     {
+        if (isDead)
+        {
+            return;
+        }
+
         EndAttack();
         actionLockTimer = Mathf.Max(actionLockTimer, hitAnimationLock);
         CrossFadeState(hitState, actionBlendTime, true);
+    }
+
+    public void PlayDeathReaction()
+    {
+        if (isDead)
+        {
+            return;
+        }
+
+        isDead = true;
+        moveInput = Vector2.zero;
+        EndAttack();
+        ClearTargetLock();
+        SetLocomotionBools(false);
+        CrossFadeState(deathState, actionBlendTime, true);
     }
 
     private void QueueMagicAttack()
@@ -605,16 +661,17 @@ public class PlayerController : MonoBehaviour
 
     private void UpdateMagicHud()
     {
-        if (currentMagicText == null)
-        {
-            return;
-        }
-
         MagicSpell spell = GetCurrentMagicSpell();
         string magicName = spell != null && !string.IsNullOrWhiteSpace(spell.DisplayName)
             ? spell.DisplayName
             : "Nenhuma";
-        currentMagicText.text = magicHudPrefix + magicName;
+
+        if (currentMagicText != null)
+        {
+            currentMagicText.text = magicHudPrefix + magicName;
+        }
+
+        MagicChanged?.Invoke(currentMagicIndex, magicName, spell != null ? spell.Icon : null);
     }
 
     private void UpdateTargetLockHud()
@@ -651,11 +708,7 @@ public class PlayerController : MonoBehaviour
         bool movingLeft = moveInput.x < -0.1f;
         bool running = IsRunning();
 
-        SetAnimatorBool(WalkHash, movingForward && !running);
-        SetAnimatorBool(WalkBackHash, movingBack);
-        SetAnimatorBool(WalkingRightHash, movingRight);
-        SetAnimatorBool(WalkingLeftHash, movingLeft);
-        SetAnimatorBool(RunningHash, running);
+        SetLocomotionBools(movingForward && !running, movingBack, movingRight, movingLeft, running);
 
         if (actionLockTimer > 0f || isAttacking)
         {
@@ -715,6 +768,20 @@ public class PlayerController : MonoBehaviour
                 triggerParameters.Add(parameter.nameHash);
             }
         }
+    }
+
+    private void SetLocomotionBools(bool value)
+    {
+        SetLocomotionBools(value, value, value, value, value);
+    }
+
+    private void SetLocomotionBools(bool walkForward, bool walkBack, bool walkRight, bool walkLeft, bool running)
+    {
+        SetAnimatorBool(WalkHash, walkForward);
+        SetAnimatorBool(WalkBackHash, walkBack);
+        SetAnimatorBool(WalkingRightHash, walkRight);
+        SetAnimatorBool(WalkingLeftHash, walkLeft);
+        SetAnimatorBool(RunningHash, running);
     }
 
     private void SetAnimatorBool(int parameterHash, bool value)

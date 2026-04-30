@@ -6,7 +6,15 @@ public class PlayerHealth : MonoBehaviour
     [SerializeField] private float maxHealth = 100f;
     [SerializeField] private float currentHealth = 100f;
 
+    [Header("Voice")]
+    [SerializeField] private AudioClip[] damageVoiceClips;
+    [SerializeField] private AudioClip deathVoiceClip;
+    [SerializeField, Range(0f, 1f)] private float damageVoiceVolume = 0.85f;
+    [SerializeField, Range(0f, 1f)] private float deathVoiceVolume = 1f;
+    [SerializeField] private float damageVoiceCooldown = 0.35f;
+
     public event Action<float, float> HealthChanged;
+    public event Action Died;
 
     public float MaxHealth => maxHealth;
     public float CurrentHealth => currentHealth;
@@ -14,6 +22,8 @@ public class PlayerHealth : MonoBehaviour
     public bool IsAlive => currentHealth > 0f;
 
     private PlayerController playerController;
+    private float nextDamageVoiceTime;
+    private bool deathNotified;
 
     private void Awake()
     {
@@ -34,7 +44,7 @@ public class PlayerHealth : MonoBehaviour
 
     public void TakeDamage(float amount)
     {
-        if (amount <= 0f)
+        if (amount <= 0f || deathNotified)
         {
             return;
         }
@@ -42,10 +52,24 @@ public class PlayerHealth : MonoBehaviour
         float previousHealth = currentHealth;
         SetHealth(currentHealth - amount);
 
-        if (currentHealth < previousHealth && IsAlive && playerController != null)
+        if (currentHealth >= previousHealth)
         {
-            playerController.PlayHitReaction();
+            return;
         }
+
+        if (IsAlive)
+        {
+            PlayDamageVoice();
+
+            if (playerController != null)
+            {
+                playerController.PlayHitReaction();
+            }
+
+            return;
+        }
+
+        Die();
     }
 
     public void Heal(float amount)
@@ -53,6 +77,11 @@ public class PlayerHealth : MonoBehaviour
         if (amount <= 0f)
         {
             return;
+        }
+
+        if (!IsAlive && amount > 0f)
+        {
+            deathNotified = false;
         }
 
         SetHealth(currentHealth + amount);
@@ -73,5 +102,50 @@ public class PlayerHealth : MonoBehaviour
     private void NotifyHealthChanged()
     {
         HealthChanged?.Invoke(currentHealth, maxHealth);
+    }
+
+    private void Die()
+    {
+        if (deathNotified)
+        {
+            return;
+        }
+
+        deathNotified = true;
+        PlayDeathVoice();
+
+        if (playerController != null)
+        {
+            playerController.PlayDeathReaction();
+        }
+
+        Died?.Invoke();
+    }
+
+    private void PlayDamageVoice()
+    {
+        if (damageVoiceClips == null || damageVoiceClips.Length == 0 || Time.time < nextDamageVoiceTime)
+        {
+            return;
+        }
+
+        AudioClip clip = damageVoiceClips[UnityEngine.Random.Range(0, damageVoiceClips.Length)];
+        PlayVoiceClip(clip, damageVoiceVolume);
+        nextDamageVoiceTime = Time.time + damageVoiceCooldown;
+    }
+
+    private void PlayDeathVoice()
+    {
+        PlayVoiceClip(deathVoiceClip, deathVoiceVolume);
+    }
+
+    private void PlayVoiceClip(AudioClip clip, float volume)
+    {
+        if (clip == null || volume <= 0f)
+        {
+            return;
+        }
+
+        AudioSource.PlayClipAtPoint(clip, transform.position, volume);
     }
 }
